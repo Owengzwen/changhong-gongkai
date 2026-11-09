@@ -38,13 +38,19 @@ jobs:
             *) echo "::error::TICK_URL 必须以 https:// 开头"; exit 1 ;;
           esac
           # 注意：公开仓库的 Actions 日志任何人可见，因此不打印响应体（含客户域名），只输出状态码
+          # -L + Cookie：兼容 Makers 预览域名（带 eo_token 访问会 302 并下发 Cookie）；仅允许跳转到 https
           for attempt in 1 2 3; do
+            jar=$(mktemp)
             code=$(curl -sS -o resp.json -w '%{http_code}' --max-time 130 \
+              -L --max-redirs 3 --proto-redir =https -c "$jar" -b "$jar" \
               -X POST -H "Authorization: Bearer ${CRON_SECRET}" "$TICK_URL" 2>/dev/null || echo 000)
             ok=$(grep -o '"ok":[a-z]*' resp.json 2>/dev/null | head -1)
             echo "attempt ${attempt}: HTTP ${code} ${ok}"
-            rm -f resp.json
+            rm -f resp.json "$jar"
             if [ "$code" = "200" ]; then exit 0; fi
+            if [ "$code" = "401" ]; then
+              echo "::error::HTTP 401：CRON_SECRET 不一致，或预览域名 eo_token 已过期（请改用自定义域名）"; exit 1
+            fi
             sleep 10
           done
           echo "::error::巡检触发失败"; exit 1
