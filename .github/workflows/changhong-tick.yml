@@ -1,0 +1,69 @@
+# 长虹工具 - 定时巡检触发器
+# 用法：将本文件放到【单独的公开仓库】的 .github/workflows/ 目录下（公开仓库 Actions 免费不限分钟）。
+# 本文件不含任何密钥：TICK_URL 与 CRON_SECRET 均配置在该仓库 Settings → Secrets and variables → Actions 中，
+# GitHub 会加密保存并在日志中自动打码。
+name: changhong-tick
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # 每 5 分钟触发一次巡检（GitHub 高峰期可能有数分钟延迟）
+    - cron: '17 3 * * 1'    # 每周一保活检查（公开仓库 60 天无提交会自动停用定时任务）
+  workflow_dispatch: {}
+
+# 默认不授予任何仓库权限，按任务单独授权
+permissions: {}
+
+concurrency:
+  group: changhong-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    if: github.event.schedule != '17 3 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions: {}
+    steps:
+      - name: Trigger tick
+        env:
+          TICK_URL: ${{ secrets.TICK_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$TICK_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::warning::尚未配置 TICK_URL / CRON_SECRET，本次跳过（配置 Secrets 后自动生效）"
+            exit 0
+          fi
+          case "$TICK_URL" in
+            https://*) ;;
+            *) echo "::error::TICK_URL 必须以 https:// 开头"; exit 1 ;;
+          esac
+          # 注意：公开仓库的 Actions 日志任何人可见，因此不打印响应体（含客户域名），只输出状态码
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o resp.json -w '%{http_code}' --max-time 130 \
+              -X POST -H "Authorization: Bearer ${CRON_SECRET}" "$TICK_URL" 2>/dev/null || echo 000)
+            ok=$(grep -o '"ok":[a-z]*' resp.json 2>/dev/null | head -1)
+            echo "attempt ${attempt}: HTTP ${code} ${ok}"
+            rm -f resp.json
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::巡检触发失败"; exit 1
+
+  keepalive:
+    if: github.event.schedule == '17 3 * * 1'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep scheduled workflow alive
+        run: |
+          last=$(git log -1 --format=%ct)
+          days=$(( ( $(date +%s) - last ) / 86400 ))
+          echo "距上次提交 ${days} 天"
+          if [ "$days" -ge 40 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "chore: keepalive"
+            git push
+          fi
