@@ -6,7 +6,7 @@ name: changhong-tick
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # 每 5 分钟触发一次巡检（GitHub 高峰期可能有数分钟延迟）
+    - cron: '23 * * * *'    # 兜底：每小时第 23 分钟触发一次（主触发为 cron-job.org 每 5 分钟；避开整点高峰）
     - cron: '17 3 * * 1'    # 每周一保活检查（公开仓库 60 天无提交会自动停用定时任务）
   workflow_dispatch: {}
 
